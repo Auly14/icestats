@@ -1,33 +1,258 @@
-name: 🏒 Fetch Hockey Data
+/**
+ * data-fetcher.js — EMPIRE HOCKEY
+ * LIIGA : https://liiga.fi/api/v1/games?tournament=runkosarja&startDate=X&endDate=Y
+ * AHL   : https://lscluster.hockeytech.com (HockeyTech)
+ */
 
-on:
-  schedule:
-    - cron: '0 8 * * *'    # 8h UTC = 9h Paris (hiver) / 10h (été)
-    - cron: '0 20 * * *'   # 20h UTC = 21h Paris
-  workflow_dispatch:        # Lancement manuel depuis Actions
+const fs    = require('fs');
+const https = require('https');
+const http  = require('http');
+const path  = require('path');
 
-jobs:
-  fetch:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write       # IMPORTANT : autorisation d'écrire dans le repo
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+function get(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const mod = parsedUrl.protocol === 'https:' ? https : http;
+    const req = mod.get({
+      hostname: parsedUrl.hostname,
+      path: parsedUrl.pathname + parsedUrl.search,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json, */*',
+        'Accept-Language': 'fi-FI,fi;q=0.9,en;q=0.8',
+        ...headers
+      },
+      timeout: 15000
+    }, res => {
+      if ([301,302,303,307,308].includes(res.statusCode) && res.headers.location) {
+        const loc = res.headers.location.startsWith('http')
+          ? res.headers.location
+          : `${parsedUrl.protocol}//${parsedUrl.hostname}${res.headers.location}`;
+        return get(loc, headers).then(resolve).catch(reject);
+      }
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
+        resolve(body);
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+  });
+}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+async function getJSON(url, headers = {}) {
+  const body = await get(url, headers);
+  try { return JSON.parse(body); }
+  catch(e) { throw new Error(`JSON invalide: ${body.slice(0, 150)}`); }
+}
 
-      - name: Run data fetcher
-        run: node data-fetcher.js
+function dateStr(d) { return d.toISOString().split('T')[0]; }
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
 
-      - name: Commit & push JSON files
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/liiga.json data/ahl.json
-          git diff --cached --quiet || git commit -m "🏒 Mise à jour données $(date -u '+%Y-%m-%d %H:%M')"
-          git push
+function saveJSON(key, data) {
+  const dir = path.join(process.cwd(), 'data');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const p = path.join(dir, `${key}.json`);
+  fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
+  console.log(`  ✅ data/${key}.json`);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LIIGA — liiga.fi API v1
+//  Endpoint confirmé: /api/v1/games?tournament=runkosarja&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+// ═══════════════════════════════════════════════════════════════
+async function fetchLiiga() {
+  console.log('\n━━━ LIIGA ━━━');
+  const today = new Date();
+  const start = dateStr(addDays(today, -7));
+  const end   = dateStr(addDays(today, 21));
+  const schedule = [];
+  const standings = [];
+
+  // ── Calendrier ──────────────────────────────────────────────
+  // L'endpoint liiga.fi retourne un tableau de matchs avec la structure :
+  // { id, season, start, homeTeam: { teamId, shortName, ... }, awayTeam: { ... }, ... }
+  const calUrls = [
+    `https://liiga.fi/api/v1/games?tournament=runkosarja&startDate=${start}&endDate=${end}`,
+    `https://liiga.fi/api/v1/games?tournament=all&startDate=${start}&endDate=${end}`,
+    `https://liiga.fi/api/v1/games?startDate=${start}&endDate=${end}`,
+    `https://liiga.fi/api/v1/games?tournament=runkosarja&season=2026`,
+  ];
+
+  let games = [];
+  for (const url of calUrls) {
+    try {
+      console.log(`  Cal: ${url.replace('https://liiga.fi', '')}`);
+      const data = await getJSON(url);
+      const arr = Array.isArray(data) ? data : (data.games || data.data || []);
+      console.log(`  → ${arr.length} matchs`);
+      if (arr.length > 0) { games = arr; break; }
+    } catch(e) { console.log(`  → ${e.message}`); }
+    await sleep(500);
+  }
+
+  const byDate = {};
+  for (const g of games) {
+    // Format liiga.fi: { start: "2026-02-24T18:30:00Z", homeTeam: { teamPlaceholder: "tappara" }, awayTeam: { ... }, started, ended }
+    const rawDate = (g.start || g.date || '').slice(0, 10);
+    if (!rawDate) continue;
+
+    // Noms d'équipes — liiga.fi utilise des IDs comme "168761288:hifk"
+    // teamPlaceholder est le slug court (ex: "tappara", "hifk")
+    const home = g.homeTeam?.teamPlaceholder || g.homeTeam?.shortName || g.homeTeam?.name
+              || (g.homeTeam?.teamId || '').split(':')[1] || '';
+    const away = g.awayTeam?.teamPlaceholder || g.awayTeam?.shortName || g.awayTeam?.name
+              || (g.awayTeam?.teamId || '').split(':')[1] || '';
+
+    const ts = g.start || '';
+    const tm = ts.match(/T(\d{2}:\d{2})/);
+    // Convertit UTC → heure Finlande (UTC+2 hiver)
+    let time = '';
+    if (tm) {
+      const h = parseInt(tm[1].split(':')[0]);
+      const m = tm[1].split(':')[1];
+      time = `${String((h + 2) % 24).padStart(2,'0')}:${m}`;
+    }
+
+    const finished = g.ended === true || g.started === true && g.ended !== false;
+    const hs = g.homeTeam?.goals ?? null;
+    const as = g.awayTeam?.goals ?? null;
+    const isFinal = finished && hs !== null && as !== null;
+
+    if (!byDate[rawDate]) byDate[rawDate] = [];
+    byDate[rawDate].push({
+      homeTeam: home,
+      awayTeam: away,
+      time,
+      status: isFinal ? 'final' : 'upcoming',
+      homeScore: isFinal ? hs : null,
+      awayScore: isFinal ? as : null,
+    });
+  }
+  for (const [date, gms] of Object.entries(byDate).sort()) {
+    schedule.push({ date, games: gms });
+    console.log(`  ${date}: ${gms.length} match(s)`);
+  }
+
+  // ── Classement ──────────────────────────────────────────────
+  await sleep(800);
+  const standUrls = [
+    'https://liiga.fi/api/v1/standings',
+    `https://liiga.fi/api/v1/standings?tournament=runkosarja&season=2026`,
+    `https://liiga.fi/api/v1/standings?season=2026`,
+  ];
+
+  for (const url of standUrls) {
+    try {
+      console.log(`  Stand: ${url.replace('https://liiga.fi', '')}`);
+      const data = await getJSON(url);
+      const teams = Array.isArray(data) ? data : (data.standings || data.teams || data.data || []);
+      if (teams.length === 0) { console.log('  → vide'); continue; }
+
+      for (const t of teams) {
+        const name = t.team?.teamPlaceholder || t.team?.shortName || t.team?.name
+                  || t.teamPlaceholder || t.shortName || t.name || t.abbreviation || '';
+        if (!name) continue;
+        standings.push({
+          name,
+          gp:       t.gamesPlayed || t.games  || t.gp || 0,
+          wins:     t.wins        || t.w       || 0,
+          losses:   t.losses      || t.l       || 0,
+          otLosses: t.otLosses    || t.otl     || 0,
+          draws:    t.ties        || t.draws   || 0,
+          points:   t.points      || t.pts     || 0,
+          gf:       t.goalsFor    || t.gf      || 0,
+          ga:       t.goalsAgainst|| t.ga      || 0,
+        });
+      }
+      if (standings.length > 0) { console.log(`  → ${standings.length} équipes`); break; }
+    } catch(e) { console.log(`  → ${e.message}`); }
+    await sleep(500);
+  }
+
+  const up = schedule.reduce((n,d) => n + d.games.filter(g=>g.status==='upcoming').length, 0);
+  console.log(`  📊 ${up} à venir, ${standings.length} classement`);
+  saveJSON('liiga', { schedule, standings, updatedAt: new Date().toISOString(), source: 'liiga.fi' });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AHL — HockeyTech
+// ═══════════════════════════════════════════════════════════════
+async function fetchAHL() {
+  console.log('\n━━━ AHL ━━━');
+  const schedule = [];
+  const standings = [];
+
+  // ── Calendrier ──────────────────────────────────────────────
+  try {
+    const url = 'https://lscluster.hockeytech.com/feed/index.php' +
+      '?feed=modulekit&view=scorebar&key=50c2cd9b5e18e390&fmt=json' +
+      '&client_code=ahl&lang=en&league_id=1&conference_id=0&num_games=80&site_id=2';
+    console.log('  Scorebar AHL');
+    const data = await getJSON(url);
+    const gamesArr = data?.SiteKit?.Scorebar || [];
+    console.log(`  → ${gamesArr.length} matchs`);
+
+    const byDate = {};
+    for (const g of gamesArr) {
+      const date = (g.GameDateISO8601 || g.GameDate || '').slice(0, 10);
+      if (!date) continue;
+      const home = g.HomeTeam?.ShortName || g.HomeTeamCode || g.HomeCity || '';
+      const away = g.VisitorTeam?.ShortName || g.VisitorTeamCode || g.VisitorCity || '';
+      const finished = parseInt(g.GameStatus) === 4 || g.GameStatusString === 'Final';
+      if (!byDate[date]) byDate[date] = [];
+      byDate[date].push({
+        homeTeam: home, awayTeam: away, time: g.GameTime || '',
+        status: finished ? 'final' : 'upcoming',
+        homeScore: finished ? (parseInt(g.HomeGoals)||0) : null,
+        awayScore: finished ? (parseInt(g.VisitorGoals)||0) : null,
+      });
+    }
+    for (const [date, gms] of Object.entries(byDate).sort()) schedule.push({ date, games: gms });
+
+  } catch(e) { console.error(`  ❌ ${e.message}`); }
+
+  // ── Classement ──────────────────────────────────────────────
+  await sleep(800);
+  try {
+    const url = 'https://lscluster.hockeytech.com/feed/index.php' +
+      '?feed=modulekit&view=standings&key=50c2cd9b5e18e390&fmt=json' +
+      '&client_code=ahl&lang=en&league_id=1&conference_id=0&site_id=2';
+    const data = await getJSON(url);
+    for (const conf of (data?.SiteKit?.Standings || [])) {
+      for (const section of (conf.sections || [conf])) {
+        for (const t of (section.teams || section.data || [])) {
+          standings.push({
+            name: t.TeamShortName || t.Name || '',
+            gp: parseInt(t.GP)||0, wins: parseInt(t.W)||0,
+            losses: parseInt(t.L)||0, otLosses: parseInt(t.OTL)||0,
+            draws:0, points: parseInt(t.PTS)||0,
+            gf: parseInt(t.GF)||0, ga: parseInt(t.GA)||0,
+          });
+        }
+      }
+    }
+    console.log(`  → ${standings.length} équipes classement`);
+  } catch(e) { console.error(`  ❌ Classement: ${e.message}`); }
+
+  const up = schedule.reduce((n,d) => n + d.games.filter(g=>g.status==='upcoming').length, 0);
+  console.log(`  📊 ${up} à venir, ${standings.length} classement`);
+  saveJSON('ahl', { schedule, standings, updatedAt: new Date().toISOString(), source: 'hockeytech' });
+}
+
+(async () => {
+  console.log(`🏒 Fetcher — ${new Date().toISOString()}`);
+  try {
+    await fetchLiiga();
+    await sleep(2000);
+    await fetchAHL();
+    console.log('\n✅ Terminé !');
+  } catch(e) {
+    console.error('❌ FATAL:', e.message);
+    process.exit(1);
+  }
+})();
