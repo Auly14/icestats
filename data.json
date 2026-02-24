@@ -1,0 +1,298 @@
+{
+  "nhl": {
+    "calendar": [],
+    "standings": [],
+    "topScorers": []
+  },
+  "liiga": {
+    "calendar": [
+      {
+        "date": "2026-02-24",
+        "away": "Liiga Vaasa",
+        "home": "Liiga Helsinki",
+        "time": "18:00",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-02-25",
+        "away": "Liiga Tampere",
+        "home": "Liiga Helsinki",
+        "time": "17:30",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-02-26",
+        "away": "Liiga Vaasa",
+        "home": "Liiga Kuopio",
+        "time": "17:00",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-02-27",
+        "away": "Liiga Vaasa",
+        "home": "Liiga Tampere",
+        "time": "20:30",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-02-28",
+        "away": "Liiga Oulu",
+        "home": "Liiga Vaasa",
+        "time": "20:30",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-03-01",
+        "away": "Liiga Vaasa",
+        "home": "Liiga Oulu",
+        "time": "17:30",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-03-02",
+        "away": "Liiga Jyvaskyla",
+        "home": "Liiga Kuopio",
+        "time": "20:00",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-03-03",
+        "away": "Liiga Espoo",
+        "home": "Liiga Espoo",
+        "time": "20:30",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-03-04",
+        "away": "Liiga Tampere",
+        "home": "Liiga Espoo",
+        "time": "17:00",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-03-05",
+        "away": "Liiga Turku",
+        "home": "Liiga Jyvaskyla",
+        "time": "17:00",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-03-06",
+        "away": "Liiga Kuopio",
+        "home": "Liiga Turku",
+        "time": "19:00",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-03-07",
+        "away": "Liiga Espoo",
+        "home": "Liiga Turku",
+        "time": "17:30",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-03-08",
+        "away": "Liiga Jyvaskyla",
+        "home": "Liiga Kuopio",
+        "time": "17:00",
+        "venue": "Aréna Liiga"
+      },
+      {
+        "date": "2026-03-09",
+        "away": "Liiga Kuopio",
+        "home": "Liiga Tampere",
+        "time": "18:30",
+        "venue": "Aréna Liiga"
+      }
+    ],
+    "standings": [
+      {
+        "team": "Liiga Espoo",
+        "gp": 42,
+        "wins": 28,
+        "losses": 14,
+        "points": 60
+      },
+      {
+        "team": "Liiga Helsinki",
+        "gp": 42,
+        "wins": 26,
+        "losses": 16,
+        "points": 58
+      },
+      {
+        "team": "Liiga Tampere",
+        "gp": 42,
+        "wins": 24,
+        "losses": 18,
+        "points": 54
+      }
+    ],
+    "topScorers": [
+      {
+        "name": "Petri Rantanen",
+        "team": "Liiga Espoo",
+        "goals": 32,
+        "assists": 28
+      },
+      {
+        "name": "Markku Kukkonen",
+        "team": "Liiga Helsinki",
+        "goals": 30,
+        "assists": 26
+      },
+      {
+        "name": "Jari Virtanen",
+        "team": "Liiga Tampere",
+        "goals": 28,
+        "assists": 24
+      }
+    ]
+  },
+  "ahl": {
+    "calendar": [
+      {
+        "date": "2026-02-24",
+        "away": "Bridgeport Islanders",
+        "home": "Hershey Bears",
+        "time": "19:30",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-02-25",
+        "away": "Rochester Americans",
+        "home": "Rochester Americans",
+        "time": "18:30",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-02-26",
+        "away": "Providence Bruins",
+        "home": "Bridgeport Islanders",
+        "time": "17:00",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-02-27",
+        "away": "Providence Bruins",
+        "home": "Hershey Bears",
+        "time": "20:30",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-02-28",
+        "away": "Hartford Wolf Pack",
+        "home": "Rochester Americans",
+        "time": "17:00",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-03-01",
+        "away": "Hartford Wolf Pack",
+        "home": "Rochester Americans",
+        "time": "18:00",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-03-02",
+        "away": "Hershey Bears",
+        "home": "Providence Bruins",
+        "time": "17:30",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-03-03",
+        "away": "Bridgeport Islanders",
+        "home": "Wilkes-Barre Penguins",
+        "time": "18:00",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-03-04",
+        "away": "Toronto Marlies",
+        "home": "Toronto Marlies",
+        "time": "17:00",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-03-05",
+        "away": "Bridgeport Islanders",
+        "home": "Hartford Wolf Pack",
+        "time": "19:30",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-03-06",
+        "away": "Toronto Marlies",
+        "home": "Wilkes-Barre Penguins",
+        "time": "18:00",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-03-07",
+        "away": "Hartford Wolf Pack",
+        "home": "Wilkes-Barre Penguins",
+        "time": "17:00",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-03-08",
+        "away": "Wilkes-Barre Penguins",
+        "home": "Toronto Marlies",
+        "time": "18:00",
+        "venue": "Aréna AHL"
+      },
+      {
+        "date": "2026-03-09",
+        "away": "Providence Bruins",
+        "home": "Hershey Bears",
+        "time": "20:30",
+        "venue": "Aréna AHL"
+      }
+    ],
+    "standings": [
+      {
+        "team": "Providence Bruins",
+        "gp": 44,
+        "wins": 30,
+        "losses": 14,
+        "points": 66
+      },
+      {
+        "team": "Hershey Bears",
+        "gp": 44,
+        "wins": 28,
+        "losses": 16,
+        "points": 62
+      },
+      {
+        "team": "Wilkes-Barre Penguins",
+        "gp": 44,
+        "wins": 26,
+        "losses": 18,
+        "points": 58
+      }
+    ],
+    "topScorers": [
+      {
+        "name": "Jack Ahcan",
+        "team": "Providence Bruins",
+        "goals": 18,
+        "assists": 22
+      },
+      {
+        "name": "Mike Vecchione",
+        "team": "Hershey Bears",
+        "goals": 16,
+        "assists": 20
+      },
+      {
+        "name": "Valtteri Kemilainen",
+        "team": "Rochester Americans",
+        "goals": 15,
+        "assists": 18
+      }
+    ]
+  },
+  "lastUpdate": "2026-02-24T14:33:56.061Z"
+}
