@@ -1,280 +1,151 @@
-/**
- * IceStats Data Fetcher
- * - NHL  : API officielle (api-web.nhle.com) — géré directement par le frontend
- * - LIIGA: TheSportsDB API gratuite (id 4931)
- * - AHL  : TheSportsDB API gratuite (id 4738)
- *
- * Lancé par GitHub Actions 2x/jour (8h et 20h UTC)
- * Écrit les fichiers data/liiga.json et data/ahl.json dans le repo
- */
+// data-fetcher.js — Récupère LIIGA et AHL depuis TheSportsDB
+// Écrit data/liiga.json et data/ahl.json dans le format exact attendu par index.html
+// Format attendu:
+//   { schedule: [{date, games:[{homeTeam, awayTeam, time, status, homeScore, awayScore}]}],
+//     standings: [{name, gp, wins, losses, otLosses, draws, points, gf, ga}],
+//     updatedAt: ISO string }
 
+const fs    = require('fs');
 const https = require('https');
-const fs   = require('fs');
-const path = require('path');
-
-// ── Dossier de sortie ──────────────────────────────────────────────────────
-if (!fs.existsSync('data')) fs.mkdirSync('data');
-
-// ── Constantes ─────────────────────────────────────────────────────────────
-const TSDB_KEY   = '123';   // clé gratuite TheSportsDB
-const TSDB_BASE  = `https://www.thesportsdb.com/api/v1/json/${TSDB_KEY}`;
-const DELAY_MS   = 500;     // pause entre chaque appel (évite le rate-limit)
+const path  = require('path');
 
 const LEAGUES = {
-  liiga: { id: '4931', name: 'LIIGA', flag: '🇫🇮' },
-  ahl:   { id: '4738', name: 'AHL',   flag: '🇨🇦' },
+  liiga: { id: '4931', name: 'LIIGA' },
+  ahl:   { id: '4738', name: 'AHL'   },
 };
 
-// ── Utilitaires ────────────────────────────────────────────────────────────
-
-/** Pause */
+// Pauses pour ne pas se faire bloquer
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/** Fetch JSON depuis une URL HTTPS */
 function fetchJSON(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, {
-      headers: {
-        'User-Agent': 'IceStats/1.0 (github-actions)',
-        'Accept':     'application/json',
-      }
-    }, res => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchJSON(res.headers.location).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        return reject(new Error(`HTTP ${res.statusCode} pour ${url}`));
-      }
-      let raw = '';
-      res.on('data', chunk => raw += chunk);
+    https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, res => {
+      let data = '';
+      res.on('data', d => data += d);
       res.on('end', () => {
-        try { resolve(JSON.parse(raw)); }
-        catch (e) { reject(new Error(`JSON invalide: ${e.message}`)); }
+        try { resolve(JSON.parse(data)); }
+        catch(e) { reject(new Error('JSON parse error: ' + e.message + ' URL: ' + url)); }
       });
     }).on('error', reject);
   });
 }
 
-/** Sauvegarde un fichier JSON dans data/ */
-function saveJSON(filename, data) {
-  const filepath = path.join('data', filename);
-  fs.writeFileSync(filepath, JSON.stringify(data, null, 2), 'utf8');
-  console.log(`  💾 Sauvegardé : ${filepath}`);
-}
-
-/** Retourne un tableau de dates au format YYYY-MM-DD (3 jours passés + 10 futurs) */
-function getDates(pastDays = 3, futureDays = 10) {
+// Génère les 21 derniers jours + 14 prochains jours (35 jours au total)
+function getDates() {
   const dates = [];
-  for (let i = -pastDays; i <= futureDays; i++) {
-    const d = new Date();
+  const today = new Date();
+  for (let i = -21; i <= 14; i++) {
+    const d = new Date(today);
     d.setDate(d.getDate() + i);
-    dates.push(d.toISOString().split('T')[0]);
+    const yyyy = d.getFullYear();
+    const mm   = String(d.getMonth() + 1).padStart(2, '0');
+    const dd   = String(d.getDate()).padStart(2, '0');
+    dates.push(`${yyyy}-${mm}-${dd}`);
   }
   return dates;
 }
 
-/** Formate une heure ISO en "HH:MM" heure de Paris */
-function formatTime(isoString) {
-  if (!isoString) return '';
-  try {
-    return new Date(isoString).toLocaleTimeString('fr-FR', {
-      hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris'
-    });
-  } catch { return ''; }
+// Parse l'heure depuis la chaîne ISO retournée par TheSportsDB
+function parseTime(strTimestamp) {
+  if (!strTimestamp) return '';
+  // Format: "2026-02-24T18:30:00+0000"
+  const m = strTimestamp.match(/T(\d{2}:\d{2})/);
+  return m ? m[1] : '';
 }
 
-// ── Calendrier jour par jour avec pause 500ms ──────────────────────────────
+// Détermine le statut du match
+function getStatus(event) {
+  if (!event) return 'upcoming';
+  const score = event.intHomeScore;
+  if (score !== null && score !== undefined && score !== '') return 'final';
+  return 'upcoming';
+}
 
-async function fetchSchedule(leagueId) {
-  const dates    = getDates(3, 10);
-  const schedule = [];
-  let   totalGames = 0;
+async function fetchLeagueData(leagueKey) {
+  const league = LEAGUES[leagueKey];
+  console.log(`\n📡 Récupération ${league.name} (ID: ${league.id})...`);
 
-  console.log(`  📅 ${dates.length} dates à interroger (pause ${DELAY_MS}ms entre chaque)...`);
+  const scheduleByDate = {};
+  const dates = getDates();
 
-  for (const dateStr of dates) {
+  // --- Récupère les matchs jour par jour ---
+  for (const date of dates) {
+    await sleep(500); // 500ms entre chaque appel
+    const url = `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${date}&l=${league.id}`;
     try {
-      const url  = `${TSDB_BASE}/eventsday.php?d=${dateStr}&l=${leagueId}`;
       const data = await fetchJSON(url);
-      const events = data?.events || [];
-
+      const events = data.events || [];
       if (events.length > 0) {
         const games = events.map(e => ({
-          id:        e.idEvent,
-          date:      dateStr,
-          time:      formatTime(e.strTimestamp) || e.strTime || '',
-          homeTeam:  e.strHomeTeam  || 'Domicile',
-          awayTeam:  e.strAwayTeam  || 'Visiteur',
-          homeScore: (e.intHomeScore !== null && e.intHomeScore !== '') ? parseInt(e.intHomeScore) : null,
-          awayScore: (e.intAwayScore !== null && e.intAwayScore !== '') ? parseInt(e.intAwayScore) : null,
-          status:    e.strStatus === 'Match Finished' ? 'Final'
-                   : e.strProgress                   ? 'Live'
-                   :                                   'À venir',
-          venue: e.strVenue || '',
+          homeTeam:  e.strHomeTeam  || '',
+          awayTeam:  e.strAwayTeam  || '',
+          time:      parseTime(e.strTimestamp || e.dateEvent),
+          status:    getStatus(e),
+          homeScore: e.intHomeScore !== '' && e.intHomeScore !== null ? parseInt(e.intHomeScore) : null,
+          awayScore: e.intAwayScore !== '' && e.intAwayScore !== null ? parseInt(e.intAwayScore) : null,
         }));
-
-        schedule.push({ date: dateStr, games });
-        totalGames += games.length;
-        console.log(`    ✅ ${dateStr} : ${games.length} match(s)`);
-      } else {
-        console.log(`    — ${dateStr} : aucun match`);
+        scheduleByDate[date] = games;
+        console.log(`  ✓ ${date}: ${games.length} match(s)`);
       }
-
-    } catch (err) {
-      console.warn(`    ⚠️  ${dateStr} : ${err.message}`);
+    } catch(e) {
+      console.warn(`  ⚠ ${date}: ${e.message}`);
     }
-
-    // ← PAUSE OBLIGATOIRE pour ne pas se faire bloquer par le rate-limit
-    await sleep(DELAY_MS);
   }
 
-  console.log(`  📊 Total : ${totalGames} matchs répartis sur ${schedule.length} jours`);
-  return schedule;
-}
+  // Convertit en tableau [{date, games:[]}] trié par date
+  const schedule = Object.entries(scheduleByDate)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, games]) => ({ date, games }));
 
-// ── Classements ────────────────────────────────────────────────────────────
-
-async function fetchStandings(leagueId) {
-  console.log('  🏆 Récupération des classements...');
+  // --- Récupère les classements ---
+  await sleep(1500);
+  let standings = [];
   try {
-    const url  = `${TSDB_BASE}/lookuptable.php?l=${leagueId}&s=2024-2025`;
+    const url = `https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=${league.id}&s=2024-2025`;
     const data = await fetchJSON(url);
-    const table = data?.table || [];
-
-    if (table.length === 0) {
-      console.log('  ⚠️  Classements indisponibles pour 2024-2025.');
-      return [];
-    }
-
-    const standings = table.map((t, i) => ({
-      rank:   i + 1,
-      name:   t.strTeam    || '',
-      badge:  t.strBadge   || '',
-      gp:     parseInt(t.intPlayed)       || 0,
-      wins:   parseInt(t.intWin)          || 0,
-      losses: parseInt(t.intLoss)         || 0,
-      draws:  parseInt(t.intDraw)         || 0,
-      points: parseInt(t.intPoints)       || 0,
-      gf:     parseInt(t.intGoalsFor)     || 0,
-      ga:     parseInt(t.intGoalsAgainst) || 0,
+    const table = data.table || [];
+    standings = table.map(t => ({
+      name:     t.strTeam      || '',
+      gp:       parseInt(t.intPlayed)  || 0,
+      wins:     parseInt(t.intWin)     || 0,
+      losses:   parseInt(t.intLoss)    || 0,
+      otLosses: 0,
+      draws:    parseInt(t.intDraw)    || 0,
+      points:   parseInt(t.intPoints)  || 0,
+      gf:       parseInt(t.intGoalsFor)     || 0,
+      ga:       parseInt(t.intGoalsAgainst) || 0,
     }));
-
-    console.log(`  ✅ ${standings.length} équipes`);
-    return standings;
-
-  } catch (err) {
-    console.warn(`  ⚠️  Classements : ${err.message}`);
-    return [];
+    console.log(`  ✓ Classement: ${standings.length} équipes`);
+  } catch(e) {
+    console.warn(`  ⚠ Classement: ${e.message}`);
   }
-}
 
-// ── Analyse paris (basée sur les victoires récentes) ──────────────────────
-
-function buildBettingAnalysis(schedule) {
-  const today    = new Date().toISOString().split('T')[0];
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-
-  // Compter les victoires récentes de chaque équipe
-  const wins = {};
-  schedule.forEach(day => {
-    if (day.date >= today) return;
-    day.games.forEach(g => {
-      if (g.homeScore === null) return;
-      const homeWon = g.homeScore > g.awayScore;
-      wins[g.homeTeam] = (wins[g.homeTeam] || 0) + (homeWon ? 1 : 0);
-      wins[g.awayTeam] = (wins[g.awayTeam] || 0) + (homeWon ? 0 : 1);
-    });
-  });
-
-  const betting = [];
-
-  schedule.forEach(day => {
-    if (day.date !== today && day.date !== tomorrow) return;
-    day.games.forEach(g => {
-      if (g.status === 'Final') return;
-
-      const hw = wins[g.homeTeam] || 0;
-      const aw = wins[g.awayTeam] || 0;
-      const homeScore = hw + 2; // +2 = avantage domicile
-      const awayScore = aw + 1;
-      const total     = homeScore + awayScore;
-
-      const homeWinPct = Math.round((homeScore / total) * 100);
-      const awayWinPct = 100 - homeWinPct;
-      const favPct     = Math.max(homeWinPct, awayWinPct);
-      const favorite   = homeWinPct >= awayWinPct ? g.homeTeam : g.awayTeam;
-      const confidence = favPct >= 65 ? 8 : favPct >= 58 ? 6 : 4;
-
-      betting.push({
-        date:       day.date,
-        match:      `${g.awayTeam} @ ${g.homeTeam}`,
-        time:       g.time,
-        homeTeam:   g.homeTeam,
-        awayTeam:   g.awayTeam,
-        homeWinPct,
-        awayWinPct,
-        favorite,
-        confidence,
-        analysis:   `Favori : ${favorite} (${favPct}%). `
-                  + `Victoires récentes — ${g.homeTeam} : ${hw}, ${g.awayTeam} : ${aw}. `
-                  + (confidence >= 8 ? 'Signal fort.' : confidence >= 6 ? 'Légère avance.' : 'Match très ouvert.'),
-      });
-    });
-  });
-
-  return betting;
-}
-
-// ── Traitement complet d'une ligue ─────────────────────────────────────────
-
-async function fetchLeague(key) {
-  const { id, name, flag } = LEAGUES[key];
-  console.log(`\n${flag}  Ligue : ${name} (TheSportsDB id ${id})`);
-  console.log('─'.repeat(50));
-
-  const schedule  = await fetchSchedule(id);
-  await sleep(DELAY_MS); // pause avant l'appel classements
-  const standings = await fetchStandings(id);
-  const betting   = buildBettingAnalysis(schedule);
-
-  saveJSON(`${key}.json`, {
-    league:    name,
-    updatedAt: new Date().toISOString(),
+  const result = {
     schedule,
     standings,
-    scorers: {
-      note:    'Stats joueurs non disponibles avec la clé gratuite TheSportsDB',
-      points:  [],
-      goals:   [],
-      assists: [],
-    },
-    betting,
-  });
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Crée le dossier data/ si nécessaire
+  const dir = path.join(__dirname, 'data');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  const outPath = path.join(dir, `${leagueKey}.json`);
+  fs.writeFileSync(outPath, JSON.stringify(result, null, 2), 'utf8');
+
+  const upcomingCount = schedule.reduce((n, d) => n + d.games.filter(g => g.status === 'upcoming').length, 0);
+  const finalCount    = schedule.reduce((n, d) => n + d.games.filter(g => g.status === 'final').length, 0);
+  console.log(`  💾 ${outPath} — ${upcomingCount} matchs à venir, ${finalCount} résultats, ${standings.length} équipes au classement`);
 }
 
-// ── MAIN ──────────────────────────────────────────────────────────────────
-
-async function main() {
-  console.log('🏒  IceStats — Data Fetcher');
-  console.log('══════════════════════════════════════════════════');
-  console.log(`📅  ${new Date().toLocaleString('fr-FR')}`);
-  console.log(`⏱️   Délai entre appels : ${DELAY_MS} ms (anti rate-limit)`);
-
-  await fetchLeague('liiga');
-  await sleep(1500); // pause d'1,5 s entre les deux ligues
-  await fetchLeague('ahl');
-
-  saveJSON('metadata.json', {
-    lastUpdate:  new Date().toISOString(),
-    liigaSource: 'TheSportsDB id 4931',
-    ahlSource:   'TheSportsDB id 4738',
-    nhlSource:   'api-web.nhle.com (chargé par le frontend)',
-  });
-
-  console.log('\n✅  Toutes les données sont à jour !');
-}
-
-main().catch(err => {
-  console.error('\n❌  Erreur fatale :', err.message);
-  process.exit(1);
-});
+(async () => {
+  try {
+    await fetchLeagueData('liiga');
+    await sleep(2000);
+    await fetchLeagueData('ahl');
+    console.log('\n✅ Terminé !');
+  } catch(e) {
+    console.error('❌ Erreur fatale:', e);
+    process.exit(1);
+  }
+})();
