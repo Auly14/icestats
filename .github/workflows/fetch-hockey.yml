@@ -2,42 +2,32 @@ name: 🏒 Fetch Hockey Data
 
 on:
   schedule:
-    # Tous les jours à 8h00 UTC (9h France) et 20h00 UTC (21h France)
-    - cron: '0 8,20 * * *'
-  # Permet de lancer manuellement depuis l'interface GitHub
-  workflow_dispatch:
+    - cron: '0 8 * * *'    # 8h UTC = 9h Paris (hiver) / 10h (été)
+    - cron: '0 20 * * *'   # 20h UTC = 21h Paris
+  workflow_dispatch:        # Lancement manuel depuis Actions
 
 jobs:
-  fetch-data:
+  fetch:
     runs-on: ubuntu-latest
-    
-    steps:
-      - name: 📥 Télécharger le repo
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: write       # IMPORTANT : autorisation d'écrire dans le repo
 
-      - name: 🟢 Configurer Node.js
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: 📦 Installer les dépendances (si nécessaire)
-        run: |
-          if [ -f package.json ]; then
-            npm install
-          fi
-
-      - name: 🏒 Récupérer les données LIIGA et AHL
+      - name: Run data fetcher
         run: node data-fetcher.js
-        continue-on-error: true
 
-      - name: 💾 Sauvegarder les données dans le repo
+      - name: Commit & push JSON files
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "IceStats Bot"
-          git add data/
-          git diff --quiet && git diff --staged --quiet || git commit -m "🏒 Mise à jour données $(date '+%Y-%m-%d %H:%M')"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/liiga.json data/ahl.json
+          git diff --cached --quiet || git commit -m "🏒 Mise à jour données $(date -u '+%Y-%m-%d %H:%M')"
           git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
