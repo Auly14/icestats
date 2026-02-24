@@ -1,43 +1,10 @@
 {
   "liiga": {
-    "calendar": [],
     "standings": [
-      {
-        "team": "Tappara",
-        "gp": 45,
-        "wins": 30,
-        "losses": 15,
-        "points": 88
-      },
-      {
-        "team": "Ilves",
-        "gp": 45,
-        "wins": 28,
-        "losses": 17,
-        "points": 82
-      },
-      {
-        "team": "HIFK",
-        "gp": 44,
-        "wins": 25,
-        "losses": 19,
-        "points": 75
-      }
+      { "team": "CONNEXION OK", "gp": 1, "wins": 1, "losses": 0, "points": 999 }
     ],
-    "topScorers": [
-      {
-        "name": "Anton Levtchi",
-        "team": "Tappara",
-        "goals": 24,
-        "assists": 31
-      },
-      {
-        "name": "Eemeli Suomi",
-        "team": "Ilves",
-        "goals": 19,
-        "assists": 35
-      }
-    ]
+    "calendar": [],
+    "topScorers": []
   },
-  "lastUpdate": "2026-02-24T15:05:43.809Z"
+  "lastUpdate": "2026-02-24"
 }
