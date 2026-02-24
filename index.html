@@ -1392,8 +1392,28 @@ function selectLeague(id) {
 // AUTO-LOAD : charge data/liiga.json ou data/ahl.json depuis GitHub
 // Matchs + classements uniquement — les stats joueurs restent SYNC manuel
 // ═══════════════════════════════════════════════════════════════
+
+// Normalise un nom d'équipe TheSportsDB → ID Empire en essayant plusieurs stratégies
+function resolveTeamId(rawName) {
+  if (!rawName) return null;
+  // 1. Via abbrevMap (clé normalisée)
+  const direct = matchTeamId(rawName);
+  if (direct) return direct;
+  // 2. Contient le nom de la ville ou un mot-clé
+  const s = normStr(rawName);
+  for (const t of cfg().teams) {
+    const tn = normStr(t.name), ti = normStr(t.id), tc = normStr(t.city);
+    if (s.includes(tn) || tn.includes(s) || s.includes(ti) || ti.includes(s) || s.includes(tc)) return t.id;
+  }
+  // 3. Première partie du nom (ex: "Tappara Tampere" → "Tappara")
+  const firstWord = s.split(/\s+/)[0];
+  for (const t of cfg().teams) {
+    if (normStr(t.name).startsWith(firstWord) || normStr(t.id).toLowerCase() === firstWord) return t.id;
+  }
+  return null;
+}
+
 async function autoLoadLeagueData(leagueId) {
-  // Badge de chargement discret
   showApiBadge('⏳ Chargement API...', '#4dd9f5', false);
 
   try {
@@ -1404,92 +1424,104 @@ async function autoLoadLeagueData(leagueId) {
     let schedLoaded = false;
     let standLoaded = false;
 
-    // ── CALENDRIER : seulement si le SYNC manuel est vide ──────────
-    // Si l'utilisateur a déjà mis des matchs via SYNC, on ne les écrase pas
+    // ── CALENDRIER ──────────────────────────────────────────────────
     const hasSyncSchedule = S.schedule.length > 0;
-    if(!hasSyncSchedule && data.schedule && data.schedule.length > 0) {
+    if (!hasSyncSchedule && data.schedule && data.schedule.length > 0) {
       const newSched = [];
-      for(const day of data.schedule) {
-        for(const g of (day.games || [])) {
-          // Mappe les noms d'équipes vers les IDs Empire
-          const homeId = matchTeamId(g.homeTeam) || g.homeTeam;
-          const awayId = matchTeamId(g.awayTeam) || g.awayTeam;
-          const status = g.status === 'Final' ? 'final'
-                       : g.status === 'Live'  ? 'live'
+      for (const day of data.schedule) {
+        for (const g of (day.games || [])) {
+          const homeId = resolveTeamId(g.homeTeam);
+          const awayId = resolveTeamId(g.awayTeam);
+          // Si on ne reconnaît pas les équipes on garde quand même avec le nom brut
+          const home = homeId || g.homeTeam;
+          const away = awayId || g.awayTeam;
+          if (!home || !away) continue;
+          const status = g.status === 'final' ? 'final'
+                       : g.status === 'Final' ? 'final'
+                       : g.status === 'live'  ? 'live'
                        : 'upcoming';
           newSched.push({
-            home: homeId, away: awayId,
-            date: day.date, time: g.time || '',
-            status, hs: g.homeScore ?? null, as: g.awayScore ?? null
+            home, away,
+            date: day.date,
+            time: g.time || '',
+            status,
+            hs: (g.homeScore !== null && g.homeScore !== undefined) ? g.homeScore : null,
+            as: (g.awayScore !== null && g.awayScore !== undefined) ? g.awayScore : null,
           });
         }
       }
-      if(newSched.length > 0) {
+      if (newSched.length > 0) {
         S.schedule = newSched;
         schedLoaded = true;
+        console.log(`[API] ${leagueId} calendrier: ${newSched.length} matchs chargés`);
+      } else {
+        console.warn(`[API] ${leagueId}: données schedule présentes mais 0 matchs reconnus`);
+        // Debug : affiche les 2 premiers matchs bruts
+        if (data.schedule[0]?.games?.[0]) console.warn('[API] Exemple brut:', JSON.stringify(data.schedule[0].games[0]));
       }
     }
 
-    // ── CLASSEMENTS : seulement si le SYNC standings est vide ──────
-    // Compare avec les defaultStats pour savoir si SYNC a déjà été appliqué
-    if(data.standings && data.standings.length > 0) {
+    // ── CLASSEMENTS ─────────────────────────────────────────────────
+    if (data.standings && data.standings.length > 0) {
       const newStats = {};
-      for(const t of data.standings) {
-        const teamId = matchTeamId(t.name) || t.name;
-        if(!teamId) continue;
+      let matched = 0;
+      for (const t of data.standings) {
+        const teamId = resolveTeamId(t.name);
+        if (!teamId) { console.warn(`[API] Équipe non reconnue: "${t.name}"`); continue; }
+        matched++;
         const existing = S.teamStats[teamId] || {};
-        // Si SYNC a déjà rempli des vraies données (pts > default), on ne touche pas
-        const isDefaultData = !existing.pts || existing === cfg().defaultStats[teamId];
-        if(isDefaultData) {
-          newStats[teamId] = {
-            gp: t.gp || 0,
-            w: t.wins || 0,
-            l: t.losses || 0,
-            otl: t.otLosses || t.draws || 0,
-            pts: t.points || 0,
-            gf: t.gf || 0,
-            ga: t.ga || 0,
-            pct: t.gp > 0 ? Math.round((t.points||0) / t.gp / 2 * 100) : 0,
-            ppPct: existing.ppPct || 20.0,
-            pkPct: existing.pkPct || 80.0,
-            shotsFor: existing.shotsFor || 28.0,
-            shotsAgainst: existing.shotsAgainst || 28.5,
-            form: existing.form || [1,1,0,1,0],
-            streak: existing.streak || ''
-          };
-        }
+        newStats[teamId] = {
+          gp:    t.gp     || 0,
+          w:     t.wins   || 0,
+          l:     t.losses || 0,
+          otl:   t.otLosses || t.draws || 0,
+          pts:   t.points || 0,
+          gf:    t.gf     || 0,
+          ga:    t.ga     || 0,
+          pct:   t.gp > 0 ? Math.round((t.points||0) / (t.gp * 2) * 100) : 0,
+          ppPct: existing.ppPct || 20.0,
+          pkPct: existing.pkPct || 80.0,
+          shotsFor:     existing.shotsFor     || 28.0,
+          shotsAgainst: existing.shotsAgainst || 28.5,
+          form:   existing.form   || [1,1,0,1,0],
+          streak: existing.streak || '',
+          homeW: existing.homeW || 0, homeL: existing.homeL || 0,
+          awayW: existing.awayW || 0, awayL: existing.awayL || 0,
+        };
       }
-      if(Object.keys(newStats).length > 0) {
-        S.teamStats = {...S.teamStats, ...newStats};
+      if (Object.keys(newStats).length > 0) {
+        S.teamStats = { ...S.teamStats, ...newStats };
         standLoaded = true;
+        console.log(`[API] ${leagueId} classement: ${matched}/${data.standings.length} équipes reconnues`);
       }
     }
 
-    // Mise à jour affichage
-    if(schedLoaded || standLoaded) {
+    // ── AFFICHAGE RÉSULTAT ───────────────────────────────────────────
+    if (schedLoaded || standLoaded) {
       const parts = [];
-      if(schedLoaded) parts.push(S.schedule.filter(m=>m.status!=='final').length + ' matchs');
-      if(standLoaded) parts.push('classement');
-      const ts = new Date(data.updatedAt);
-      const timeStr = ts.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
-      showApiBadge('✓ API ' + parts.join(' · ') + ' · ' + timeStr, '#00f5a0', true);
+      if (schedLoaded) parts.push(S.schedule.filter(m => m.status !== 'final').length + ' matchs à venir');
+      if (standLoaded) parts.push('classement');
+      let timeStr = '';
+      try { timeStr = new Date(data.updatedAt).toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'}); } catch{}
+      showApiBadge('✓ ' + parts.join(' · ') + (timeStr ? ' · ' + timeStr : ''), '#00f5a0', true);
       render();
       updateDashHeader();
-    } else if(!hasSyncSchedule) {
-      showApiBadge('⚠ Données API vides — lancez GitHub Actions', '#f0c84a', false);
     } else {
-      // Données SYNC en place, API ignorée silencieusement
-      showApiBadge('✓ Données SYNC actives', cfg().accent, true);
+      // Données JSON vides ou équipes non reconnues — mode SYNC reste actif
+      if (hasSyncSchedule) {
+        showApiBadge('✓ Données SYNC actives', cfg().accent, true);
+      } else {
+        showApiBadge('⚠ JSON vide — relancez GitHub Actions', '#f0c84a', false);
+      }
     }
 
   } catch(err) {
-    // Fichier non trouvé = GitHub Actions pas encore lancé
-    if(err.message.includes('404') || err.message.includes('HTTP')) {
-      showApiBadge('⚡ SYNC manuel requis — ou lancez GitHub Actions', '#f0c84a', false);
+    console.warn('[autoLoad] Erreur:', err.message);
+    if (err.message.includes('404') || err.message.includes('Failed to fetch') || err.message.includes('HTTP')) {
+      showApiBadge('⚡ Lancez GitHub Actions pour charger les données', '#f0c84a', false);
     } else {
-      showApiBadge('⚠ Erreur API — mode SYNC manuel', '#f0c84a', false);
+      showApiBadge('⚠ Erreur chargement — mode SYNC manuel', '#f0c84a', false);
     }
-    console.log('autoLoad info:', err.message);
   }
 }
 
