@@ -1,151 +1,174 @@
-// data-fetcher.js — Récupère LIIGA et AHL depuis TheSportsDB
-// Écrit data/liiga.json et data/ahl.json dans le format exact attendu par index.html
-// Format attendu:
-//   { schedule: [{date, games:[{homeTeam, awayTeam, time, status, homeScore, awayScore}]}],
-//     standings: [{name, gp, wins, losses, otLosses, draws, points, gf, ga}],
-//     updatedAt: ISO string }
+/**
+ * data-fetcher.js — EMPIRE HOCKEY
+ * Sources:
+ *   LIIGA  → TheSportsDB (ID 4931) — eventsday jour par jour + lookuptable classement
+ *   AHL    → TheSportsDB (ID 4738) — idem
+ * 
+ * Écrit : data/liiga.json  data/ahl.json
+ * Format de sortie (exact, attendu par index.html) :
+ * {
+ *   schedule: [ { date:"YYYY-MM-DD", games:[ { homeTeam, awayTeam, time, status, homeScore, awayScore } ] } ],
+ *   standings: [ { name, gp, wins, losses, otLosses, draws, points, gf, ga } ],
+ *   updatedAt: "ISO"
+ * }
+ */
 
 const fs    = require('fs');
 const https = require('https');
 const path  = require('path');
 
-const LEAGUES = {
-  liiga: { id: '4931', name: 'LIIGA' },
-  ahl:   { id: '4738', name: 'AHL'   },
-};
-
-// Pauses pour ne pas se faire bloquer
+// ── Utilitaires ────────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-function fetchJSON(url) {
+function get(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, res => {
-      let data = '';
-      res.on('data', d => data += d);
+    const req = https.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; EmpireHockey/1.0)',
+        'Accept':     'application/json'
+      },
+      timeout: 10000
+    }, res => {
+      let body = '';
+      res.on('data', c => body += c);
       res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch(e) { reject(new Error('JSON parse error: ' + e.message + ' URL: ' + url)); }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        }
+        try { resolve(JSON.parse(body)); }
+        catch(e) { reject(new Error(`Bad JSON from ${url}: ${e.message}`)); }
       });
-    }).on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error(`Timeout: ${url}`)); });
   });
 }
 
-// Génère les 21 derniers jours + 14 prochains jours (35 jours au total)
-function getDates() {
+// ── Génère les dates autour d'aujourd'hui ──────────────────────────────────────
+function getDateRange(pastDays = 7, futureDays = 21) {
   const dates = [];
   const today = new Date();
-  for (let i = -21; i <= 14; i++) {
+  for (let i = -pastDays; i <= futureDays; i++) {
     const d = new Date(today);
     d.setDate(d.getDate() + i);
-    const yyyy = d.getFullYear();
-    const mm   = String(d.getMonth() + 1).padStart(2, '0');
-    const dd   = String(d.getDate()).padStart(2, '0');
-    dates.push(`${yyyy}-${mm}-${dd}`);
+    dates.push(d.toISOString().split('T')[0]); // YYYY-MM-DD
   }
   return dates;
 }
 
-// Parse l'heure depuis la chaîne ISO retournée par TheSportsDB
-function parseTime(strTimestamp) {
-  if (!strTimestamp) return '';
-  // Format: "2026-02-24T18:30:00+0000"
-  const m = strTimestamp.match(/T(\d{2}:\d{2})/);
+// ── Parse l'heure depuis strTimestamp (TheSportsDB) ───────────────────────────
+function extractTime(event) {
+  // strTimestamp: "2026-02-24 18:30:00" ou "2026-02-24T18:30:00+0000"
+  const ts = event.strTimestamp || event.dateEventLocal || '';
+  const m = ts.match(/[\sT](\d{2}:\d{2})/);
   return m ? m[1] : '';
 }
 
-// Détermine le statut du match
-function getStatus(event) {
-  if (!event) return 'upcoming';
+// ── Statut du match ───────────────────────────────────────────────────────────
+function matchStatus(event) {
   const score = event.intHomeScore;
-  if (score !== null && score !== undefined && score !== '') return 'final';
+  if (score !== null && score !== undefined && score !== '' && score !== 'null') {
+    return 'final';
+  }
   return 'upcoming';
 }
 
-async function fetchLeagueData(leagueKey) {
-  const league = LEAGUES[leagueKey];
-  console.log(`\n📡 Récupération ${league.name} (ID: ${league.id})...`);
+// ── Fetch complet d'une ligue ─────────────────────────────────────────────────
+async function fetchLeague(key, leagueId, leagueName) {
+  console.log(`\n━━━ ${leagueName} (ID:${leagueId}) ━━━`);
 
-  const scheduleByDate = {};
-  const dates = getDates();
+  // ── 1. CALENDRIER ────────────────────────────────────────────────────────────
+  const dates = getDateRange(7, 21);
+  const scheduleMap = {};
+  let totalGames = 0;
 
-  // --- Récupère les matchs jour par jour ---
   for (const date of dates) {
-    await sleep(500); // 500ms entre chaque appel
-    const url = `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${date}&l=${league.id}`;
+    await sleep(600); // respecte le rate-limit de TheSportsDB
+    const url = `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${date}&l=${leagueId}`;
     try {
-      const data = await fetchJSON(url);
+      const data = await get(url);
       const events = data.events || [];
+
       if (events.length > 0) {
-        const games = events.map(e => ({
+        scheduleMap[date] = events.map(e => ({
           homeTeam:  e.strHomeTeam  || '',
           awayTeam:  e.strAwayTeam  || '',
-          time:      parseTime(e.strTimestamp || e.dateEvent),
-          status:    getStatus(e),
-          homeScore: e.intHomeScore !== '' && e.intHomeScore !== null ? parseInt(e.intHomeScore) : null,
-          awayScore: e.intAwayScore !== '' && e.intAwayScore !== null ? parseInt(e.intAwayScore) : null,
+          time:      extractTime(e),
+          status:    matchStatus(e),
+          homeScore: (e.intHomeScore !== null && e.intHomeScore !== '' && e.intHomeScore !== 'null')
+                       ? parseInt(e.intHomeScore) : null,
+          awayScore: (e.intAwayScore !== null && e.intAwayScore !== '' && e.intAwayScore !== 'null')
+                       ? parseInt(e.intAwayScore) : null,
         }));
-        scheduleByDate[date] = games;
-        console.log(`  ✓ ${date}: ${games.length} match(s)`);
+        totalGames += scheduleMap[date].length;
+        console.log(`  ${date} : ${scheduleMap[date].length} match(s)`);
       }
     } catch(e) {
-      console.warn(`  ⚠ ${date}: ${e.message}`);
+      console.warn(`  ${date} : erreur — ${e.message}`);
     }
   }
 
-  // Convertit en tableau [{date, games:[]}] trié par date
-  const schedule = Object.entries(scheduleByDate)
+  // Convertit en tableau trié
+  const schedule = Object.entries(scheduleMap)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, games]) => ({ date, games }));
 
-  // --- Récupère les classements ---
+  console.log(`  → Total calendrier : ${totalGames} match(s) sur ${schedule.length} jour(s)`);
+
+  // ── 2. CLASSEMENT ────────────────────────────────────────────────────────────
   await sleep(1500);
   let standings = [];
-  try {
-    const url = `https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=${league.id}&s=2024-2025`;
-    const data = await fetchJSON(url);
-    const table = data.table || [];
-    standings = table.map(t => ({
-      name:     t.strTeam      || '',
-      gp:       parseInt(t.intPlayed)  || 0,
-      wins:     parseInt(t.intWin)     || 0,
-      losses:   parseInt(t.intLoss)    || 0,
-      otLosses: 0,
-      draws:    parseInt(t.intDraw)    || 0,
-      points:   parseInt(t.intPoints)  || 0,
-      gf:       parseInt(t.intGoalsFor)     || 0,
-      ga:       parseInt(t.intGoalsAgainst) || 0,
-    }));
-    console.log(`  ✓ Classement: ${standings.length} équipes`);
-  } catch(e) {
-    console.warn(`  ⚠ Classement: ${e.message}`);
+
+  // Essaie la saison courante puis la précédente
+  for (const season of ['2024-2025', '2025-2026', '2023-2024']) {
+    try {
+      const url = `https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=${leagueId}&s=${season}`;
+      const data = await get(url);
+      const table = data.table || [];
+      if (table.length > 0) {
+        standings = table.map(t => ({
+          name:     t.strTeam               || '',
+          gp:       parseInt(t.intPlayed)   || 0,
+          wins:     parseInt(t.intWin)      || 0,
+          losses:   parseInt(t.intLoss)     || 0,
+          otLosses: 0,
+          draws:    parseInt(t.intDraw)     || 0,
+          points:   parseInt(t.intPoints)   || 0,
+          gf:       parseInt(t.intGoalsFor)     || 0,
+          ga:       parseInt(t.intGoalsAgainst) || 0,
+        }));
+        console.log(`  → Classement ${season} : ${standings.length} équipes`);
+        break;
+      }
+    } catch(e) {
+      console.warn(`  Classement ${season} : ${e.message}`);
+    }
+    await sleep(800);
   }
 
-  const result = {
-    schedule,
-    standings,
-    updatedAt: new Date().toISOString(),
-  };
+  // ── 3. RÉSULTAT FINAL ────────────────────────────────────────────────────────
+  const result = { schedule, standings, updatedAt: new Date().toISOString() };
 
-  // Crée le dossier data/ si nécessaire
-  const dir = path.join(__dirname, 'data');
+  const dir = path.join(process.cwd(), 'data');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  const outPath = path.join(dir, `${leagueKey}.json`);
+  const outPath = path.join(dir, `${key}.json`);
   fs.writeFileSync(outPath, JSON.stringify(result, null, 2), 'utf8');
 
-  const upcomingCount = schedule.reduce((n, d) => n + d.games.filter(g => g.status === 'upcoming').length, 0);
-  const finalCount    = schedule.reduce((n, d) => n + d.games.filter(g => g.status === 'final').length, 0);
-  console.log(`  💾 ${outPath} — ${upcomingCount} matchs à venir, ${finalCount} résultats, ${standings.length} équipes au classement`);
+  const upcoming = schedule.reduce((n, d) => n + d.games.filter(g => g.status === 'upcoming').length, 0);
+  const final    = schedule.reduce((n, d) => n + d.games.filter(g => g.status === 'final').length, 0);
+  console.log(`  ✅ ${outPath} — ${upcoming} à venir, ${final} résultats, ${standings.length} classement`);
 }
 
+// ── MAIN ──────────────────────────────────────────────────────────────────────
 (async () => {
   try {
-    await fetchLeagueData('liiga');
-    await sleep(2000);
-    await fetchLeagueData('ahl');
-    console.log('\n✅ Terminé !');
+    await fetchLeague('liiga', '4931', 'LIIGA (Finlande)');
+    await sleep(3000);
+    await fetchLeague('ahl',   '4738', 'AHL (Amérique)');
+    console.log('\n✅ Tous les fichiers mis à jour !');
   } catch(e) {
-    console.error('❌ Erreur fatale:', e);
+    console.error('❌ FATAL:', e.message);
     process.exit(1);
   }
 })();
