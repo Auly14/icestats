@@ -1,0 +1,30 @@
+{
+  "name": "icestats-data-fetcher",
+  "version": "1.0.0",
+  "description": "Récupère les données NHL (API), LIIGA et AHL (web scraping) pour IceStats",
+  "main": "data-fetcher.js",
+  "scripts": {
+    "fetch": "node data-fetcher.js",
+    "start": "node data-fetcher.js",
+    "test": "echo \"Teste data-fetcher\" && node data-fetcher.js"
+  },
+  "keywords": [
+    "hockey",
+    "nhl",
+    "liiga",
+    "ahl",
+    "scraping",
+    "statistics"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12"
+  },
+  "optionalDependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
